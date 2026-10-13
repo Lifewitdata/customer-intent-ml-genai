@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import os
 
+from dotenv import load_dotenv
 from langchain.agents import AgentExecutor, create_react_agent
+
+load_dotenv()
 from langchain.prompts import PromptTemplate
 from langchain.tools import Tool
 from langchain_openai import ChatOpenAI

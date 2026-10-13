@@ -5,7 +5,10 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+
+load_dotenv()
 from pydantic import BaseModel, Field
 
 from src.intent.models import predict_baseline, predict_transformer
