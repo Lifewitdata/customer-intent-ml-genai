@@ -1,44 +1,32 @@
-"""Agentic routing: answer, clarify, or escalate based on intent + retrieved FAQ."""
+"""Agentic routing: answer, clarify, or escalate based on intent + retrieved FAQ.
+
+The FastAPI app must import cleanly even when the optional LLM stack (LangChain +
+OpenAI-compatible key) is missing or incompatible, so all LangChain imports are lazy
+and `agent_answer` degrades to rule-based `route` on any failure.
+"""
 
 from __future__ import annotations
 
 import os
 
 from dotenv import load_dotenv
-from langchain.agents import AgentExecutor, create_react_agent
 
 load_dotenv()
-from langchain.prompts import PromptTemplate
-from langchain.tools import Tool
-from langchain_openai import ChatOpenAI
 
 from src.intent.models import predict_baseline
 from src.rag.retriever import top_faq
 
 
-REACT_PROMPT = PromptTemplate.from_template(
-    """You are a helpful bank support assistant. Your job is to either answer the customer's question,
-ask a single clarifying question, or escalate to a human agent.
+SYSTEM_PROMPT = """You are a helpful bank support assistant. Your job is to either answer the
+customer's question, ask a single clarifying question, or escalate to a human agent.
 
-Use the following format:
-
-Question: the input question you must answer
-Thought: think about what the customer is asking
-Action: the action to take, must be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original question, or "ESCALATE" if a human is needed
-
-Available tools:
-{tools}
-
-Begin!
-
-Question: {input}
-Thought:{agent_scratchpad}"""
-)
+Workflow:
+1. Use classify_intent to label the customer's request.
+2. Use retrieve_faq to fetch the most relevant FAQ answer for that intent.
+3. If the FAQ is relevant and no escalation is flagged, give a concise Final Answer based on it.
+   If the FAQ is missing, ambiguous, or flagged [ESCALATE], respond with a single clarifying
+   question or start your answer with "ESCALATE".
+"""
 
 
 def _classify_text(text: str) -> str:
@@ -54,35 +42,37 @@ def _retrieve_faq(query: str) -> str:
     return f"Intent: {meta['intent']}{esc}\nQ: {meta['question']}\nA: {meta['answer']}"
 
 
-def make_tools() -> list[Tool]:
-    return [
-        Tool(
-            name="classify_intent",
-            func=_classify_text,
-            description="Classify the customer's intent into one of 77 banking support categories.",
-        ),
-        Tool(
-            name="retrieve_faq",
-            func=_retrieve_faq,
-            description="Retrieve the most relevant FAQ answer from the knowledge base.",
-        ),
-    ]
-
-
 def make_agent(temperature: float = 0.0):
-    """Build a ReAct agent. Falls back to rule-based routing if no OpenAI key is set."""
+    """Build a LangChain ReAct-style agent. Returns None if the LLM stack is unavailable."""
     api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
+    if not api_key or api_key.strip() in ("", "your-key-here"):
         return None
-    model_name = os.environ.get("LLM_MODEL", "gpt-3.5-turbo")
-    kwargs = {"model_name": model_name, "temperature": temperature, "api_key": api_key}
-    base_url = os.environ.get("OPENAI_BASE_URL")
-    if base_url:
-        kwargs["base_url"] = base_url
-    llm = ChatOpenAI(**kwargs)
-    tools = make_tools()
-    agent = create_react_agent(llm, tools, REACT_PROMPT)
-    return AgentExecutor(agent=agent, tools=tools, verbose=False, handle_parsing_errors=True)
+    try:
+        from langchain.agents import create_agent
+        from langchain_core.tools import Tool
+        from langchain_openai import ChatOpenAI
+
+        tools = [
+            Tool(
+                name="classify_intent",
+                func=_classify_text,
+                description="Classify the customer's intent into one of 77 banking support categories.",
+            ),
+            Tool(
+                name="retrieve_faq",
+                func=_retrieve_faq,
+                description="Retrieve the most relevant FAQ answer from the knowledge base.",
+            ),
+        ]
+        model_name = os.environ.get("LLM_MODEL", "gpt-3.5-turbo")
+        kwargs = {"model_name": model_name, "temperature": temperature, "api_key": api_key}
+        base_url = os.environ.get("OPENAI_BASE_URL")
+        if base_url:
+            kwargs["base_url"] = base_url
+        llm = ChatOpenAI(**kwargs)
+        return create_agent(model=llm, tools=tools, system_prompt=SYSTEM_PROMPT)
+    except Exception:
+        return None
 
 
 def route(text: str) -> dict:
@@ -99,11 +89,18 @@ def route(text: str) -> dict:
 
 def agent_answer(text: str) -> dict:
     """Use the LangChain agent if available, otherwise use rule-based routing."""
-    executor = make_agent()
-    if executor is None:
+    agent = make_agent()
+    if agent is None:
         return route(text)
-    result = executor.invoke({"input": text})
-    output = result.get("output", "")
+    try:
+        result = agent.invoke({"messages": [{"role": "user", "content": text}]})
+        messages = result.get("messages", [])
+        output = messages[-1].content if messages else ""
+    except Exception:
+        return route(text)
+    if not output:
+        return route(text)
     if "ESCALATE" in output.upper():
-        return {"action": "escalate", "response": output.replace("ESCALATE", "").strip() or "I'm connecting you with a specialist.", "source": "agent"}
+        cleaned = output.upper().replace("ESCALATE", "").strip() or "I'm connecting you with a specialist."
+        return {"action": "escalate", "response": cleaned, "source": "agent"}
     return {"action": "answer", "response": output, "source": "agent"}

@@ -21,6 +21,12 @@ models/
 *.safetensors
 faiss_index/
 data/processed/
+# Raw dataset is cached at runtime from PolyAI's repo via `make data` (see data/raw/PROVENANCE.md)
+data/raw/*.csv
+data/raw/label_map.json
+
+# Logs
+*.log
 
 # Jupyter
 .ipynb_checkpoints/

@@ -16,7 +16,7 @@ def test_load_raw_returns_dataframes():
 
 def test_labels_are_strings():
     train, _ = load_raw()
-    assert train["label"].dtype == object
+    assert pd.api.types.is_string_dtype(train["label"])
     assert all(isinstance(x, str) for x in train["label"].head(10))
 
 

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+import pandas as pd
 import torch
 from datasets import Dataset
 from sklearn.linear_model import LogisticRegression
@@ -31,8 +32,11 @@ def train_baseline(train, test, max_iter: int = 1000, C: float = 10.0):
     """Train a TF-IDF + logistic regression baseline."""
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Banking77's test split contains all 77 intents but train covers only 70, so the encoder must
+    # be fit on the shared label space or le.transform(test) raises on unseen intents.
     le = LabelEncoder()
-    y_train = le.fit_transform(train["label"])
+    le.fit(pd.concat([train["label"], test["label"]]).unique())
+    y_train = le.transform(train["label"])
     y_test = le.transform(test["label"])
 
     vectorizer = build_vectorizer()
