@@ -69,11 +69,17 @@ def make_tools() -> list[Tool]:
     ]
 
 
-def make_agent(model_name: str = "gpt-3.5-turbo", temperature: float = 0.0):
+def make_agent(temperature: float = 0.0):
     """Build a ReAct agent. Falls back to rule-based routing if no OpenAI key is set."""
-    if not os.environ.get("OPENAI_API_KEY"):
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
         return None
-    llm = ChatOpenAI(model_name=model_name, temperature=temperature)
+    model_name = os.environ.get("LLM_MODEL", "gpt-3.5-turbo")
+    kwargs = {"model_name": model_name, "temperature": temperature, "api_key": api_key}
+    base_url = os.environ.get("OPENAI_BASE_URL")
+    if base_url:
+        kwargs["base_url"] = base_url
+    llm = ChatOpenAI(**kwargs)
     tools = make_tools()
     agent = create_react_agent(llm, tools, REACT_PROMPT)
     return AgentExecutor(agent=agent, tools=tools, verbose=False, handle_parsing_errors=True)
